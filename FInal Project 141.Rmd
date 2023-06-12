@@ -1,0 +1,448 @@
+---
+title: "An Overview of Neural Activity and Decision Making in Mice"
+author: "Zhiyue Guan 919286782"
+date: '2023-06-12'
+output: html_document
+---
+
+```{r eval=TRUE, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(knitr)
+library(dplyr)
+library(kableExtra)
+library(caTools)
+library(MASS)
+library(tidyverse)
+```
+
+## Abstract
+
+This project aims to explore the relationship between neural activity and decision-making in mice through data analysis. The dataset consists of eighteen sessions involving four different mice, encompassing variables such as mouse name, date of the experiment, brain area, number of neurons, number of trials, and success rate. The project begins by examining the data features to gain insights into the characteristics of the dataset and identify patterns related to decision-making.Also,a prediction model is constructed using logistic regression to investigate the extent to which neural activity can predict decision outcomes.The results provide significant information about the accuracy of the model in predicting decision outcomes based on neural activity.
+
+------------------------------------------------------------------------
+
+## Introduction
+
+Decision-making is a fundamental cognitive process that plays a significant role in both human and animal behavior. Exploring the neural mechanisms underlying decision-making is essential for gaining insights into cognitive processes and has broad implications for fields such as psychology and neuroscience. By understanding how decisions are made at the neural level,we are able to know their behavior. The primary objective of this project is to build a predictive model that can accurately predict the outcome or feedback type of each trial based on neural activity data. To achieve this objective, our analysis will be divided into three distinct parts. In the initial stage of data exploration, we will identify factors of interest that may be relevant to the feedback type. By examining their trends across trials and mice.This exploratory analysis will provide us with a foundation for further investigation. In the second stage, we will aggregate the identified factors of interest and explore their collective impact within each session. The goal of this part is to enable the borrowing of information across sessions to enhance the prediction performance. Finally, we will develop a prediction model to predict the outcome (i.e., feedback types). This model will utilize the available data, with the feedback type serving as the target value for training. By establishing the associations between the neural activity data and the feedback type, the model will be capable of making accurate predictions.
+
+------------------------------------------------------------------------
+
+## Background
+
+In the study conducted by Steinmetz et al. (2019), experiments were conducted on a total of 10 mice across 39 sessions. Each session consisted of several hundred trials where visual stimuli were randomly presented to the mice on screens positioned on both sides. The mice were tasked with making decisions using a wheel controlled by their forepaws in response to the visual stimuli, which in range of {0, 0.25, 0.5, 1}, The experiments observed the feedback in four conditions: When left contrast \> right contrast, success (1) if turning the wheel to the right and failure (-1) otherwise.When right contrast \> left contrast, success (1) if turning the wheel to the left and failure (-1) otherwise. When both left and right contrasts are zero, success (1) if holding the wheel still and failure (-1) otherwise.When left and right contrasts are equal but non-zero, left or right will be randomly chosen (50%) as the correct choice.
+
+During the trials, the activity of neurons in the visual cortex of the mice was recorded and provided as spike trains, which consisted of timestamps representing the firing events of individual neurons. For this project, our specific focus lies in analyzing the spike trains of neurons recorded from the onset of the stimuli to 0.4 seconds after the onset. We analyze data from a subset of the sessions, specifically Sessions 1 to 18, involving four mice named Cori, Frossman, Hence, and Lederberg. The dataset includes 8 variables:'mouse_name' (identifying the specific mouse), 'date_exp' (the date of the experiment),'feedback_type' ( type of the feedback, 1 for success and -1 for failure), 'contrast_left' ( contrast of the left stimulus), 'contrast_right' (contrast of the right stimulus), 'time' (centers of the time bins for 'spks'), 'spks' (numbers of spikes of neurons in the visual cortex in time bins defined in 'time'), 'brain_area' (area of the brain where each neuron lives).
+
+------------------------------------------------------------------------
+
+## Descriptive analysis
+
+First, we will explore the features of the data sets in order to build our prediction model.The data used in this analysis consists of a subset of sessions from a neuroscience experiment. The available data includes information from a total of 18 sessions involving four different mice. The variables recorded for each session include mouse_name (identifying the specific mouse), date_exp (the date of the experiment), n_brain_area (the unique brain areas involved in each session), n_neurons (the number of neurons recorded), n_trials (the number of trials conducted in each session), and success_rate (the ratio of successful trials to the total number of trials). It is important to note that the selected data does not contain any missing values, ensuring the reliability of the results.
+
+```{r eval=TRUE, echo=FALSE}
+# Load the data 
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('~/Downloads/sessions/session',i,'.rds',sep=''))
+}
+
+n.session=length(session)
+# The meta data frame has six columns: mouse_name, date_exp, n_brain_area, n_neurons, n_trials, and success_rate.
+meta <- tibble( 
+  mouse_name = rep('name',n.session),
+  date_exp =rep('dt',n.session),
+  n_brain_area = rep(0,n.session),
+  n_neurons = rep(0,n.session),
+  n_trials = rep(0,n.session),
+  success_rate = rep(0,n.session)
+) # 'rep()' is the function in R that replicates value.  The initial values for each column are set to zero or character strings ('name' and 'dt').
+for(i in 1:n.session){
+  ses = session[[i]];
+  meta[i,1]=ses$mouse_name;
+  meta[i,2]=ses$date_exp;
+  meta[i,3]=length(unique(ses$brain_area));#n_unique_area
+  meta[i,4]=dim(ses$spks[[1]])[1];# number of brain area
+  meta[i,5]=length(ses$feedback_type);# n_trials
+  meta[i,6]=mean(ses$feedback_type+1)/2;# success rate 
+  } # in order to present four types of mice name, the date of experiment,the number of neurons, the number of trials, and success rate for each session.
+
+ 
+kable(meta, format = "html", table.attr = "class='table table-striped'",digits=2) 
+```
+
+### Average spike number across trial
+
+In order to investigate the variations across trials within each session, we conducted an exploration of the neural activities in Session 2. By analyzing the average number of spikes per brain area, we discovered that the brain area 'VISpn' exhibits a significantly higher average number of spike counts. This observation implies that the neurons in 'VISpn' are more actively engaged in processing visual stimuli and participating in the decision-making task.Also,the trend of 'VISpn' keep approximately constant through the ascending time. Conversely, the graph illustrates that the brain areas 'root' and 'CA1' display comparatively lower levels of activity when compared to other brain regions.
+
+```{r eval=TRUE, echo=FALSE}
+i.s=2 # session 2
+i.t=1  # number of the trial
+spk = session[[i.s]]$spks[[i.t]] # calculate the spike trial
+area = session[[i.s]]$brain_area
+# calculate the number of spikes for each neuron in this trial
+spk_count=apply(spk,1,sum)
+
+ for(i in 1:dim(spk)[1]){
+ spk_count[i]=sum(spk[i,])
+ }
+
+# tapply():
+spk.average.tapply=tapply(spk_count, area, mean)
+
+average_spike_area<-function(i.t,this_session){
+  spk = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk_count=apply(spk,1,sum)
+  spk.average.tapply=tapply(spk_count, area, mean)
+  return(spk.average.tapply)
+  }
+
+# Test the function
+average_spike_area(1,this_session = session[[i.s]])
+
+
+# above code shows the activity for one trials, now we are focus on all trials 
+# create a data frame to perform all activities 
+n.trial=length(session[[i.s]]$feedback_type)
+n.area=length(unique(session[[i.s]]$brain_area ))
+# Alternatively, you can extract these information in the meta that we created before.
+
+# We will create a data frame that contain the average spike counts for each area, feedback type,  the two contrasts, and the trial id
+trial.summary = matrix(nrow=n.trial,ncol= n.area+1+2+1)
+for(i.t in 1:n.trial){
+  trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.s],
+                        i.t)
+}
+
+colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+
+# Turning it into a data frame
+trial.summary <- as_tibble(trial.summary)
+head(trial.summary)
+
+area.col=rainbow(n=n.area,alpha=0.8)
+# In base R, I usually initiate a blank plot before drawing anything on it
+plot(x=1,y=0, col='white',xlim=c(0,n.trial),ylim=c(0.5,2.2), xlab="Trials",ylab="Average spike counts", main=paste("Spikes per area in Session", i.s))
+
+
+for(i in 1:n.area){
+  lines(y=trial.summary[[i]],x=trial.summary$id,col=area.col[i],lty=2,lwd=0.4)
+  lines(smooth.spline(trial.summary$id, trial.summary[[i]]),col=area.col[i],lwd=3)
+  }
+legend("topright", 
+  legend = colnames(trial.summary)[1:n.area], 
+  col = area.col, 
+  lty = 1, 
+  cex = 0.8)
+```
+
+It is important to explore the changes across trials as there are hundreds of sessions in each trial.By comparing the differences in neural responses and feedback at each trial level, we can gain insights into which brain areas are more responsive to positive feedback (1) or negative feedback (-1). This analysis helps us understand the neural dynamics and their relationship to the feedback received during the decision-making process.
+
+```{r eval=TRUE, echo=FALSE}
+
+plot.trial<-function(i.t,area, area.col,this_session){
+    
+    spks=this_session$spks[[i.t]];#the number of trial
+    n.neuron=dim(spks)[1] #number of neuron
+    time.points=this_session$time[[i.t]]
+    
+    plot(0,0,xlim=c(min(time.points),max(time.points)),ylim=c(0,n.neuron+1),col='white', xlab='Time (s)',yaxt='n', ylab='Neuron', main=paste('Trial ',i.t, 'feedback', this_session$feedback_type[i.t] ),cex.lab=1.5)
+    for(i in 1:n.neuron){
+        i.a=which(area== this_session$brain_area[i]);
+        col.this=area.col[i.a]
+        
+        ids.spike=which(spks[i,]>0) # find out when there are spikes 
+        if( length(ids.spike)>0 ){
+            points(x=time.points[ids.spike],y=rep(i, length(ids.spike) ),pch='.',cex=2, col=col.this)
+        }
+      
+            
+    }
+    
+legend("topright", 
+  legend = area, 
+  col = area.col, 
+  pch = 3, 
+  cex = 0.8
+  )
+  }
+    
+```
+
+```{r eval=TRUE, echo=FALSE}
+varname=names(trial.summary);
+area=varname[1:(length(varname)-4)]
+plot.trial(1,area, area.col,session[[i.s]])
+
+varname=names(trial.summary);
+area=varname[1:(length(varname)-4)]
+par(mfrow=c(1,2))
+plot.trial(1,area, area.col,session[[i.s]])
+plot.trial(2,area, area.col,session[[i.s]])
+par(mfrow=c(1,2))
+```
+
+Summarize the plot: We first plot a graph for the feedback of -1 for trial 1 based on each brain area. Then we compare it with the feedback of 1 for trial 2 in the same session. The results reveal that the neurons in the 'VISpm' and 'POST' areas are actively involved in processing information related to visual stimuli and the decision-making process, regardless of the feedback outcome. However, it is important to note that we cannot directly conclude that a brain area with high neural activity is only responsible for generating more positive feedback.
+
+### Explore homogeneity and heterogeneity across sessions and mice.
+
+##### Brain area by Mouse
+
+Our goal is to find the similarity and difference across mice and session, so that we plot graphs of brain area, success rate, and number of neurons by mouse using the 'ggplot2' library in R. Here are 3 boxplots below shown below.
+
+```{r eval=TRUE, echo=FALSE}
+#plot a graph of brain_area by mouse
+library(ggplot2)
+ggplot(meta, aes(x = mouse_name, y = as.integer(n_brain_area),col=mouse_name)) +
+  geom_boxplot() +
+  xlab("Mouse") +
+  ylab("brain area") +
+  ggtitle("Brain area by Mouse") 
+```
+
+In the 'Brain area by Mouse' plot, we aim to explore whether there is a similarity and difference between each mouse in terms of the size of the brain area , it also can provide insights into the neural capabilities and functioning of the mice. By observing the median values of each mouse, we can conclude that 'Hench' has a larger brain area compared to the other mice, while 'Cori' has the smallest number of brain areas. The total trend of the graph is vary across mice but variation of each mouse are pretty similar. However, this result alone does not directly establish a relationship between brain area size and positive feedback. Therefore, further analysis considering other factors is necessary to determine any potential associations.
+
+#### Number of by Mouse
+
+```{r eval=TRUE, echo=FALSE}
+library(ggplot2)
+ggplot(meta, aes(x = mouse_name, y = as.integer(n_neurons),col=mouse_name)) +
+  geom_boxplot() +
+  xlab("Mouse") +
+  ylab("number of neurons") +
+  ggtitle("Number of  by Mouse") 
+
+```
+
+We plot a 'Number of neurons by Mouse' graph to explore the similarities and differences in the number of neurons across mice. By observing the graph, we can identify variations in the number of neurons among different mice. Specifically, 'Forssmann' stands out with a larger number of neurons compared to the other mice. On the other hand, 'Cori' and 'Lederberg' have lower numbers of neurons but exhibit similar variation. This analysis provides insights into the neural composition of the mice and highlights the differences in the size of their neural populations.
+
+#### Success rate by Mouse
+
+The goal of analyzing the 'success rate across mice' in this context is to understand how different mice perform in the given task across sessions. This analysis helps identify whether certain mice consistently have higher or lower success rates and whether there are any factors contributing to their performance.
+
+```{r eval=TRUE, echo=FALSE}
+# plot a graph of success rate by Mouse
+par(mfrow=c(2,2))
+library(ggplot2)
+ggplot(meta, aes(x = mouse_name, y = as.numeric(success_rate),col=mouse_name)) +
+  geom_boxplot() +
+  xlab("Mouse") +
+  ylab("Success rate") +
+  ggtitle("Success rate by Mouse") 
+```
+
+By examining the median of the boxplot for the success rate across mice, it becomes apparent that 'Cori' has a lower success rate compared to 'Hench' and 'Forssmann', whereas 'Lederberg' has the highest success rate. In terms of the variations in success rates and identifying differences between mice, we can assess the heterogeneity across mice in terms of their performance. 'Forssmann' displays low variability in each trial, while 'Lederberg' demonstrates a high average success rate with significant variability. These findings lead to the conclusion that each mouse may possess unique abilities that contribute to the observed variation in success rates.
+
+##### Summary of plots
+
+The observation that mice with a lower number of brain areas and fewer neurons may have a lower proportion of success rates is interesting. It suggests that there may be a relationship between the factors of decision making for mice and the number of brain areas and neurons in their brain areas.Specifically, the example of 'Cori' having a lower number of brain areas and neurons, resulting in a lower success rate, and 'Lederberg' having higher values for both variables and a high success rate, supports the hypothesis that the number of brain areas and neurons could potentially influence the decision-making process in mice.
+
+------------------------------------------------------------------------
+
+## Data integration
+
+From the project description, we can see that the ultimate goal of the course project is to predict the outcome (i.e. `feedback_type`) in the test set that contains 100 trials from Session 1 and Session 18. Since from part 1, we have already calculated the average number of spikes is calculated as a measure of neural activity within each trial, seems like it plays an important role in decision making for mouse. Therefore, now we are going to create a data frame to observe the neural activity across session.The average number of spikes across sessions can be used as a feature or predictor in the prediction task to estimate or predict the feedback.
+
+```{r eval=TRUE, echo=FALSE}
+# Create an empty list to store the data frames for each session
+dfs <- list()
+
+# Iterate over each session
+for (i.s in 1:length(session)) {
+  n_trials <- length(session[[i.s]]$feedback_type)
+  
+  # Create a data frame for the current session
+  df_session <- data.frame(Session = rep(i.s, n_trials),
+                           Trial = 1:n_trials,
+                           Mouse = rep(session[[i.s]]$mouse, n_trials),
+                           averagespike = numeric(n_trials),
+                           stringsAsFactors = FALSE)
+
+  
+  # Iterate over each trial
+  for (i.t in 1:n_trials) {
+    spks_trial <- session[[i.s]]$spks[[i.t]]
+    total_spikes <- apply(spks_trial, 1, sum)
+    avg_spikes <- mean(total_spikes)
+    df_session$averagespike[i.t] <- avg_spikes
+  }
+  
+  # Append the session data frame to the list
+  dfs[[i.s]] <- df_session
+}
+
+# Combine all session data frames into a single data frame
+df <- do.call(rbind, dfs)
+head(df)
+
+```
+
+#### Combine data frame
+
+To enhance the prediction model, our goal is to combine the average number of spikes across sessions with a larger dataframe that includes variables such as left contrast, right contrast, feedback, session, and trial. This combined dataframe encompasses our target value and holds valuable information for improving the predictive model. Based on the background information, we understand that the left contrast and right contrast variables generate stimuli that elicit neuronal responses in different brain areas, influencing the mice's decision-making process. Therefore, these variables can be used as target variables in our predictive model, potentially enhancing the accuracy of the results. By incorporating additional variables, we can capture more relevant patterns and relationships that contribute to predicting feedback outcomes.
+
+```{r eval=TRUE, echo=FALSE}
+trialsummary1= list()
+for( i.s in 1:18){
+  n.trial=length(session[[i.s]]$feedback_type)
+  n.area=length(unique(session[[i.s]]$brain_area))
+# Alternatively, you can extract these information in the meta that we created before.
+
+# We will create a data frame that contain the average spike counts for each area, feedback type,  the two contrasts, and the trial id
+ trial.summary = matrix(nrow=n.trial,ncol=1+2)
+ for(i.t in 1:n.trial){
+   trial.summary[i.t,]=c(session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.t])
+  }
+
+  colnames(trial.summary)=c('feedback', 'left_contr','right_contr')
+  trial.summary<- as.data.frame(trial.summary)
+  trialsummary1[[i.s]]=trial.summary
+
+}
+
+trailscombined<- bind_rows(trialsummary1)
+combine_df<- cbind(df,trailscombined) 
+head(combine_df)
+```
+
+#### Average Spike Number Across Session
+
+In order to find the difference across session, we decided to conduct average spike Number across session. The plot visualizes the average spike number across sessions, with each data point representing a mouse. The x-axis represents the session, the y-axis represents the average spike number, and the points are color-coded based on the mouse name.From the plot, we can observe that 'Cori' exhibits a higher activity in neurons and a larger variation compared to the other mice. On the other hand, the median of the average spike number appears to be similar between 'Hench' and 'Lederberg'.
+
+```{r eval=TRUE, echo=FALSE}
+ggplot(df, aes(x = Session, y = averagespike, col = Mouse)) +
+  geom_boxplot() +
+  labs(x = "Session", y = "Average Spike Number") +
+  ggtitle("Average Spike Number Across Sessions (Grouped by Mouse Name)")
+
+```
+
+------------------------------------------------------------------------
+
+## Predictive modeling and Prediction performance on the test sets
+
+Finally, we will utilize our final combined model, which includes the target variable, and construct a prediction model for predicting the outcome, specifically the feedback types.
+
+```{r eval=TRUE, echo=FALSE}
+# Set a seed for reproducibility
+set.seed(123)
+data <- combine_df$feedback
+# Create the data partition
+split<- sample.split(data,SplitRatio=0.80)
+# Split the data
+train_data <- subset(combine_df,split == TRUE)
+test_data <- subset(combine_df,split == FALSE)
+logi <- glm(feedback ~ ., data = train_data)
+pred <- predict(logi, newdata = test_data, type = 'response') 
+pred_class <- ifelse(pred > 0.5, '-1', '1')              
+# Confusion matrix from logistic
+conf_logi <- table(Actual=test_data$feedback,Predict=pred_class, dnn = c('Predicted Direction', 'Actual Feedback'))
+print(conf_logi)
+# test error
+missclassification_rate <- 1-sum(diag(conf_logi)) / sum(conf_logi)
+missclassification_rate
+
+
+```
+
+We utilize the logistic regression model to generate predictions on the test data using the 'predict' function. The predicted values are assigned labels as either '-1' or '1'. Evaluating the model's performance through the confusion matrix, we observe that the model correctly predicted '-1' for 81 observations that actually had a feedback of '-1' (true negatives), but it incorrectly predicted '-1' for 214 observations that actually had a feedback of '1' (false positives). Furthermore, the model incorrectly predicted '1' for 295 observations that actually had a feedback of '-1' (false negatives), and it correctly predicted '1' for 427 observations that actually had a feedback of '1' (true positives).
+
+The misclassification rate, which stands at 0.500, indicates that approximately 50% of the observations in the test dataset were misclassified by the prediction model. This suggests that the model's accuracy in predicting the feedback types is relatively low.
+
+##### Session 1
+
+Sesson 1 has a missclassification rate with 0.826.
+
+```{r eval=TRUE, echo=FALSE}
+session_1_data <- combine_df %>%
+  group_by(Session) %>%
+  filter(Session == 1) %>%
+  ungroup()
+set.seed(123)
+data <- session_1_data$feedback
+# Create the data partition
+split<- sample.split(data,SplitRatio=0.80)
+# Split the data
+train_data <- subset(session_1_data,split == TRUE)
+test_data <- subset(session_1_data,split == FALSE)
+logi <- glm(feedback ~ averagespike+left_contr + right_contr, data = train_data)
+pred <- predict(logi, newdata = test_data, type = 'response') 
+pred_class <- ifelse(pred > 0.5, '-1', '1')              
+# Confusion matrix from logistic
+conf_logi <- table(Actual=test_data$feedback,Predict=pred_class, dnn = c('Predicted Direction', 'Feedback'))
+print(conf_logi)
+# test error
+missclassification_rate <- 1-sum(diag(conf_logi)) / sum(conf_logi)
+missclassification_rate
+
+```
+
+##### Session 18
+
+Sesson 18 has a missclassification rate with 0.698.
+
+```{r eval=TRUE, echo=FALSE}
+("/Users/zhiyue/Downloads/test/test.RData")
+session_18_data <- combine_df %>%
+  group_by(Session) %>%
+  filter(Session == 18) %>%
+  ungroup()
+set.seed(123)
+data <- session_18_data$feedback
+# Create the data partition
+split<- sample.split(data,SplitRatio=0.80)
+# Split the data
+train_data <- subset(session_18_data,split == TRUE)
+test_data <- subset(session_18_data,split == FALSE)
+logi <- glm(feedback ~ averagespike+left_contr + right_contr, data = train_data)
+pred <- predict(logi, newdata = test_data, type = 'response') 
+pred_class <- ifelse(pred > 0.5, '-1', '1')              
+# Confusion matrix from logistic
+conf_logi <- table(Actual=test_data$feedback,Predict=pred_class, dnn = c('Predicted Direction', 'Feedback'))
+print(conf_logi)
+# test error
+missclassification_rate <- 1-sum(diag(conf_logi)) / sum(conf_logi)
+missclassification_rate
+```
+
+------------------------------------------------------------------------
+
+## Discussion
+
+Based on our project, we initially explored the features of the dataset to build our prediction model. This involved analyzing important information from each of the 18 sessions for different mice. These statistics provided us with a comprehensive overview of the data, allowed us to identify patterns, assess data quality, and understand the performance of the mice in the decision-making task.During our analysis, we examined the trends across trials within each session. By plotting the activity of each brain area, we gained insights into how the decision-making system in mice may be influenced by specific brain areas. However, when comparing the feedback of trials based on brain areas, we discovered that highly active brain areas with a large number of neurons did not directly correlate with accurate decision making. The graph showed that these brain areas exhibited both high positive and negative feedback.Our project also provides basic information about the trends across sessions and mice. Based on these findings, it is possible to identify relationships between factors such as brain areas, the number of neurons, and success rate, but their significance is not explicitly determined.
+
+Furthermore, we constructed a logistic regression model to predict the feedback types using the available variables. However, the model's performance, as demonstrated by the confusion matrix, reveals a relatively high misclassification rate of 0.500. This indicates that the model's accuracy in predicting the feedback types is limited. It suggests that there may be other factors influencing the decision-making process that are not accounted for by the selected variables.
+
+In conclusion, our project has provided valuable insights into the data characteristics, neural activity patterns, and prediction of feedback types in mice during a decision-making task. While we have identified some interesting trends, it is important to acknowledge the limitations of our study. Future research can further explore and enhance our findings, ultimately contributing to a more comprehensive understanding of the factors that influence decision making in mice.
+
+------------------------------------------------------------------------
+
+## Acknowledgement
+
+I am thankful to Chatgpt for providing the some basic explanation of neural structure and grammar help for this Project.
+
+------------------------------------------------------------------------
+
+## Reference
+
+Steinmetz, N.A., Zatka-Haas, P., Carandini, M. et al. Distributed coding of choice, action and engagement across the mouse brain. Nature 576, 266--273 (2019). <https://doi.org/10.1038/s41586-019-1787-x>
+
+------------------------------------------------------------------------
+
+## Session info {.unnumbered}
+
+```{r}
+sessionInfo()
+```
+
+------------------------------------------------------------------------
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
